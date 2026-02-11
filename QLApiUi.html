@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>QLAPI面板</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f8f9fa;
+      padding: 12px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      margin: 16px 0;
+      font-size: 1.4rem;
+      color: #2c3e50;
+    }
+
+    /* 固定 4 个按钮，不滑动 */
+    .tab-buttons {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .tab-btn {
+      padding: 12px 8px;
+      background: #e9ecef;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .tab-btn.active {
+      background: #0d6efd;
+      color: white;
+    }
+
+    .tab-content {
+      display: none;
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    .tab-content.active {
+      display: block;
+    }
+
+    input, button {
+      width: 100%;
+      padding: 12px;
+      margin: 8px 0;
+      border: 1px solid #ced4da;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+    button {
+      background: #0d6efd;
+      color: white;
+      border: none;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { opacity: 0.9; }
+    button.delete { background: #dc3545; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td {
+      padding: 10px;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+      font-size: 14px;
+    }
+    th { color: #6c757d; }
+
+    .message {
+      padding: 10px;
+      border-radius: 8px;
+      margin: 10px 0;
+      font-size: 14px;
+    }
+    .success { background: #d1e7dd; color: #0f5132; }
+    .error { background: #f8d7da; color: #842029; }
+    .hidden { display: none; }
+
+    @media (max-width: 480px) {
+      .tab-buttons {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+      }
+      .tab-btn {
+        padding: 10px 4px;
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<h1>环境变量管理</h1>
+
+<!-- 固定 4 个按钮，无滑动 -->
+<div class="tab-buttons">
+  <button class="tab-btn active" onclick="openTab('list')">查看</button>
+  <button class="tab-btn" onclick="openTab('create')">创建</button>
+  <button class="tab-btn" onclick="openTab('update')">更新</button>
+  <button class="tab-btn" onclick="openTab('delete')">删除</button>
+</div>
+
+<!-- 查看 -->
+<div id="list" class="tab-content active">
+  <input type="text" id="searchValue" value="JD_COOKIE" placeholder="搜索关键词（可选）" />
+  <button onclick="loadEnvs()">查询</button>
+  <div id="envList"></div>
+</div>
+
+<!-- 创建 -->
+<div id="create" class="tab-content">
+  <input type="text" id="createName" placeholder="名称（必填） "  value="JD_COOKIE" />
+  <input type="text" id="createValue" placeholder="值（必填）" />
+   <input type="text" id="crremark" placeholder="备注" />
+  <button onclick="createEnv()">创建</button>
+  <div id="createMessage" class="hidden"></div>
+</div>
+
+<!-- 更新 -->
+<div id="update" class="tab-content">
+  <input type="number" id="updateId" placeholder="ID（必填）" />
+  <input type="text" id="updateName" placeholder="新名称（可选）" value="JD_COOKIE"  />
+  <input type="text" id="updateValue" placeholder="新值（必选）" />
+     <input type="text" id="upremark" placeholder="备注" />
+	 
+  <button onclick="updateEnv()">更新</button>
+  <div id="updateMessage" class="hidden"></div>
+</div>
+
+<!-- 删除 -->
+<div id="delete" class="tab-content">
+  <input type="number" id="deleteId" placeholder="ID（必填）" />
+  <button class="delete" onclick="deleteEnv()">删除</button>
+  <div id="deleteMessage" class="hidden"></div>
+</div>
+
+<script>
+  const PROXY_BASE = "http://localhost:8000";
+
+  function openTab(name) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(name).classList.add('active');
+    document.querySelector(`.tab-btn[onclick="openTab('${name}')"]`).classList.add('active');
+    if (name === 'list') loadEnvs();
+  }
+
+  function showMessage(id, text, isError = false) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = `message ${isError ? 'error' : 'success'} hidden`;
+    el.classList.remove('hidden');
+    setTimeout(() => {
+      if (!el.matches(':hover')) el.classList.add('hidden');
+    }, 5000);
+  }
+
+  async function callProxy(path, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const url = `${PROXY_BASE}${path}${query ? '?' + query : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      let msg = `错误 ${res.status}`;
+      try { msg += ": " + await res.text(); } catch(e) {}
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  async function loadEnvs() {
+    try {
+      const search = document.getElementById('searchValue').value.trim();
+      const params = search ? { searchValue: search } : {};
+      const result = await callProxy("/api/envs", params);
+
+      if (result.code !== 200) {
+        throw new Error(result.message || "API 返回非 200 状态");
+      }
+
+      const list = Array.isArray(result.data) ? result.data : (result.data ? [result.data] : []);
+
+      if (list.length === 0) {
+        document.getElementById('envList').innerHTML = '<div style="text-align:center;color:#6c757d;padding:20px;">暂无数据</div>';
+        return;
+      }
+
+      let html = `<table><thead><tr><th>ID</th><th>名称</th><th>值（前30字符）</th><th>备注</th><th>状态</th></tr></thead><tbody>`;
+      list.forEach(item => {
+        html += `
+          <tr>
+            <td>${item.id}</td>
+            <td>${item.name || '-'}</td>
+            <td title="${item.value || ''}">${(item.value || '').substring(0, 30)}${item.value && item.value.length > 30 ? '...' : ''}</td>
+			<td>${item.remarks || '-'}</td>
+			<td>${item.status }</td>
+          </tr>`;
+      });
+      html += `</tbody></table>`;
+      document.getElementById('envList').innerHTML = html;
+    } catch (err) {
+      document.getElementById('envList').innerHTML = 
+        `<div class="message error">加载失败: ${err.message}</div>`;
+    }
+  }
+
+  async function createEnv() {
+    const name = document.getElementById('createName').value.trim();
+    const value = document.getElementById('createValue').value.trim();
+	const remark = document.getElementById('remark').value.trim();
+    if (!name || !value) return showMessage('createMessage', '名称和值不能为空', true);
+    try {
+      const result = await callProxy("/api/create-env", { name, value,remark });
+      if (result.code === 200) {
+        showMessage('createMessage', '✅ 创建成功！');
+        document.getElementById('createName').value = '';
+        document.getElementById('createValue').value = '';
+		document.getElementById('remark').value = '';
+        openTab('list');
+      } else {
+        throw new Error(result.message || "未知错误");
+      }
+    } catch (err) {
+      showMessage('createMessage', '❌ ' + err.message, true);
+    }
+  }
+
+  async function updateEnv() {
+    const id = document.getElementById('updateId').value.trim();
+    const name = document.getElementById('updateName').value.trim();
+    const value = document.getElementById('updateValue').value.trim();
+	const remark = document.getElementById('upremark').value.trim();
+
+    if (!id) return showMessage('updateMessage', 'ID 不能为空', true);
+    if (!name && !value) return showMessage('updateMessage', '至少填写一个字段', true);
+    const params = { id };
+    if (name) params.name = name;
+    if (value) params.value = value;
+	
+	if (remark) params.remark = remark;
+
+    try {
+      const result = await callProxy("/api/update-env", params);
+      if (result.code === 200) {
+        showMessage('updateMessage', '✅ 更新成功！');
+        ['updateId', 'updateName', 'updateValue','remark'].forEach(id => document.getElementById(id).value = '');
+        openTab('list');
+      } else {
+        throw new Error(result.message || "未知错误");
+      }
+    } catch (err) {
+      showMessage('updateMessage', '❌ ' + err.message, true);
+    }
+  }
+
+  async function deleteEnv() {
+    const id = document.getElementById('deleteId').value.trim();
+    if (!id) return showMessage('deleteMessage', 'ID 不能为空', true);
+    if (!confirm(`⚠️ 确定要删除 ID=${id} 的环境变量？`)) return;
+    try {
+      const result = await callProxy("/api/delete-env", { id });
+      if (result.code === 200) {
+        showMessage('deleteMessage', '✅ 删除成功！');
+        document.getElementById('deleteId').value = '';
+        openTab('list');
+      } else {
+        throw new Error(result.message || "未知错误");
+      }
+    } catch (err) {
+      showMessage('deleteMessage', '❌ ' + err.message, true);
+    }
+  }
+
+  loadEnvs();
+</script>
+
+</body>
+</html>
